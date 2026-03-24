@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>PYROS — Fire & Gas Command</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Cousine:wght@400;700&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --ink:#04080e;
+  --deep:#07100a;
+  --panel:rgba(8,14,10,0.92);
+  --panel2:rgba(4,8,6,0.96);
+  --b1:rgba(255,120,0,0.12);
+  --b2:rgba(255,120,0,0.25);
+  --fire:#ff6a00;
+  --fire2:#ff3d00;
+  --ember:#ffaa00;
+  --ember2:#ffd000;
+  --lava:#ff1a1a;
+  --safe:#00ff88;
+  --safe-dim:#003322;
+  --cyan:#00e5c8;
+  --text:#c8a882;
+  --text2:#f0d8b0;
+  --text3:#5a4030;
+  --mono:'Cousine',monospace;
+  --stencil:'Black Ops One',sans-serif;
+  --body:'Barlow Condensed',sans-serif;
+  --status-h:var(--safe);
+  --status-glow:rgba(0,255,136,0.2);
+  --status-core:rgba(0,255,136,0.08);
+}
+body.s-warn{--status-h:var(--ember);--status-glow:rgba(255,170,0,0.3);--status-core:rgba(255,170,0,0.1);}
+body.s-crit{--status-h:var(--lava);--status-glow:rgba(255,26,26,0.4);--status-core:rgba(255,26,26,0.12);}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{min-height:100vh;background:var(--ink);color:var(--text2);font-family:var(--body);overflow-x:hidden;}
+
+/* ── FIRE CANVAS (full background) ── */
+#fire-bg{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0;transition:opacity 1.2s;}
+body.s-crit #fire-bg{opacity:0.18;}
+body.s-warn #fire-bg{opacity:0.07;}
+
+/* ── BUBBLE CANVAS ── */
+#bubble-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;}
+
+/* ── THERMAL NOISE OVERLAY ── */
+#app::before{
+  content:'';position:fixed;inset:0;z-index:1;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  opacity:0.4;
+}
+
+/* ── SCANLINES ── */
+#app::after{content:'';position:fixed;inset:0;z-index:2;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.06) 2px,rgba(0,0,0,0.06) 4px);}
+
+/* ── VIGNETTE ── */
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(0,0,0,0.7) 100%);}
+
+/* ── SCREEN SHAKE ── */
+body.s-crit #app{animation:shk 0.15s infinite;}
+@keyframes shk{0%,100%{transform:translate(0,0)}20%{transform:translate(-2px,1px)}60%{transform:translate(2px,-1px)}80%{transform:translate(-1px,2px)}}
+
+#app{position:relative;z-index:3;max-width:1400px;margin:0 auto;padding:16px 18px 60px;}
+
+/* ═══════════════════════════════
+   ANIMATIONS
+═══════════════════════════════ */
+@keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulseRing{0%,100%{transform:scale(1);opacity:0.6}50%{transform:scale(1.06);opacity:1}}
+@keyframes rotateSlow{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes rotateBack{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.1}}
+@keyframes flameDance{0%,100%{transform:scaleY(1) skewX(0deg)}25%{transform:scaleY(1.05) skewX(-2deg)}75%{transform:scaleY(0.96) skewX(2deg)}}
+@keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@keyframes crit-vignette{0%,100%{box-shadow:inset 0 0 0px rgba(255,26,26,0)}50%{box-shadow:inset 0 0 80px rgba(255,26,26,0.15)}}
+@keyframes row-slide{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}
+@keyframes warn-stripe{from{background-position:0 0}to{background-position:-60px 0}}
+
+/* ═══════════════════════════════
+   DANGER FRAME (critical border)
+═══════════════════════════════ */
+#danger-frame{
+  position:fixed;inset:0;z-index:9990;pointer-events:none;
+  border:0px solid transparent;transition:border 0.3s;
+}
+body.s-crit #danger-frame{border:3px solid rgba(255,26,26,0.5);animation:crit-vignette 0.8s infinite;}
+
+/* ═══════════════════════════════
+   WARNING STRIPE (top)
+═══════════════════════════════ */
+#warn-stripe{
+  height:0;overflow:hidden;
+  background:repeating-linear-gradient(-45deg,var(--ember),var(--ember) 12px,var(--ink) 12px,var(--ink) 24px);
+  background-size:60px 100%;
+  transition:height 0.4s;
+  animation:warn-stripe 1.5s linear infinite;
+}
+body.s-warn #warn-stripe,body.s-crit #warn-stripe{height:5px;}
+body.s-crit #warn-stripe{background:repeating-linear-gradient(-45deg,var(--lava),var(--lava) 12px,#300 12px,#300 24px);}
+
+/* ═══════════════════════════════
+   HEADER
+═══════════════════════════════ */
+.hdr{
+  display:flex;align-items:stretch;justify-content:space-between;
+  background:var(--panel2);border:1px solid var(--b1);
+  margin-bottom:14px;overflow:hidden;
+  clip-path:polygon(0 0,calc(100% - 24px) 0,100% 24px,100% 100%,24px 100%,0 calc(100% - 24px));
+}
+.hdr-brand{display:flex;align-items:center;gap:16px;padding:14px 22px;border-right:1px solid var(--b1);}
+.pyros-sigil{width:50px;height:50px;flex-shrink:0;position:relative;}
+.pyros-sigil svg{width:100%;height:100%;}
+.brand-copy h1{
+  font-family:var(--stencil);font-size:28px;letter-spacing:5px;
+  color:#fff;text-shadow:0 0 20px var(--status-h),0 0 60px var(--status-h);
+  transition:text-shadow 0.6s;line-height:1;
+}
+.brand-copy p{font-family:var(--mono);font-size:9px;letter-spacing:3px;color:var(--text3);margin-top:3px;}
+.hdr-right{display:flex;align-items:stretch;margin-left:auto;}
+.hdr-cell{
+  display:flex;flex-direction:column;justify-content:center;align-items:center;
+  padding:8px 20px;border-left:1px solid var(--b1);gap:3px;min-width:110px;
+}
+.hc-label{font-family:var(--mono);font-size:8px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;}
+.hc-val{font-family:var(--mono);font-size:12px;color:var(--cyan);letter-spacing:1px;}
+.hc-clock{font-family:var(--stencil);font-size:22px;color:var(--ember);letter-spacing:3px;text-shadow:0 0 10px rgba(255,170,0,0.4);}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--safe);box-shadow:0 0 8px var(--safe);animation:blink 1.5s infinite;}
+.live-wrap{display:flex;align-items:center;gap:7px;}
+.live-txt{font-family:var(--mono);font-size:10px;color:var(--safe);letter-spacing:2px;}
+
+/* ═══════════════════════════════
+   TICKER
+═══════════════════════════════ */
+.ticker{
+  background:var(--panel2);border:1px solid var(--b1);
+  border-left:3px solid var(--status-h);
+  margin-bottom:14px;overflow:hidden;
+  padding:6px 0;transition:border-left-color 0.5s;
+}
+.ticker-inner{display:flex;white-space:nowrap;animation:ticker 25s linear infinite;gap:60px;}
+.t-item{font-family:var(--mono);font-size:10px;color:var(--text3);letter-spacing:2px;text-transform:uppercase;display:flex;align-items:center;gap:10px;}
+.t-sep{color:var(--fire);font-size:12px;}
+
+/* ═══════════════════════════════
+   MAIN GRID
+═══════════════════════════════ */
+.grid{display:grid;grid-template-columns:300px 1fr 300px;gap:14px;margin-bottom:14px;}
+@media(max-width:1100px){.grid{grid-template-columns:1fr 1fr;}}
+@media(max-width:700px){.grid{grid-template-columns:1fr;}}
+
+/* ═══════════════════════════════
+   PANEL BASE
+═══════════════════════════════ */
+.pnl{
+  background:var(--panel);border:1px solid var(--b1);
+  position:relative;overflow:hidden;
+  animation:fadeUp 0.5s ease backwards;
+  transition:border-color 0.3s;
+}
+.pnl:hover{border-color:var(--b2);}
+/* top heat line */
+.pnl::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--fire),var(--ember),transparent);opacity:0.5;}
+/* corner cuts */
+.pnl::after{content:'';position:absolute;top:0;right:0;
+  width:0;height:0;border-style:solid;
+  border-width:0 14px 14px 0;border-color:transparent var(--ink) transparent transparent;}
+
+.ptitle{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;border-bottom:1px solid var(--b1);
+  background:rgba(0,0,0,0.3);
+}
+.ptitle-l{display:flex;align-items:center;gap:8px;}
+.pt-bar{width:2px;height:14px;background:linear-gradient(to bottom,var(--fire),var(--ember2));border-radius:1px;flex-shrink:0;}
+.pt-text{font-family:var(--mono);font-size:9px;letter-spacing:3px;color:var(--fire);text-transform:uppercase;font-weight:700;}
+.pt-right{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:1px;}
+
+/* ═══════════════════════════════
+   REACTOR CORE (center status)
+═══════════════════════════════ */
+.reactor-pnl{
+  display:flex;flex-direction:column;align-items:center;
+  padding:24px 16px;gap:16px;
+  background:var(--panel);border:1px solid var(--b1);
+  position:relative;overflow:hidden;
+  animation:fadeUp 0.4s ease backwards;
+}
+.reactor-pnl::before{content:'';position:absolute;inset:0;
+  background:radial-gradient(circle at 50% 45%,var(--status-core),transparent 65%);
+  transition:background 0.7s;pointer-events:none;}
+
+.reactor-wrap{position:relative;width:200px;height:200px;flex-shrink:0;}
+/* Outer rotating dashes */
+.r-ring1{position:absolute;inset:0;border-radius:50%;border:1px dashed rgba(255,106,0,0.2);animation:rotateSlow 20s linear infinite;}
+.r-ring2{position:absolute;inset:12px;border-radius:50%;border:1px dashed rgba(255,106,0,0.15);animation:rotateBack 15s linear infinite;}
+/* Progress ring */
+.r-svg{position:absolute;inset:0;width:100%;height:100%;}
+/* Inner glow */
+.r-glow{
+  position:absolute;inset:30px;border-radius:50%;
+  background:radial-gradient(circle,var(--status-core),transparent 70%);
+  animation:pulseRing 2.5s ease-in-out infinite;
+  transition:background 0.6s;
+}
+.r-center{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:3px;
+}
+.r-emoji{font-size:34px;line-height:1;filter:drop-shadow(0 0 8px var(--status-h));transition:filter 0.5s;}
+body.s-crit .r-emoji{animation:flameDance 0.4s infinite;}
+.r-status{
+  font-family:var(--stencil);font-size:18px;letter-spacing:5px;
+  color:var(--status-h);text-shadow:0 0 12px var(--status-h);
+  transition:color 0.4s,text-shadow 0.4s;
+}
+.r-desc{font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:2px;text-align:center;max-width:90px;}
+
+/* Segmented number */
+.seg-box{
+  width:100%;background:rgba(0,0,0,0.6);border:1px solid var(--b1);
+  padding:8px 12px;display:flex;align-items:baseline;justify-content:center;gap:6px;
+  position:relative;overflow:hidden;
+}
+.seg-box::before{content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,106,0,0.04),transparent);}
+.seg-num{
+  font-family:var(--stencil);font-size:52px;color:var(--status-h);
+  text-shadow:0 0 30px var(--status-h),0 0 60px var(--status-glow);
+  transition:color 0.4s,text-shadow 0.4s;letter-spacing:4px;line-height:1;
+}
+.seg-unit{font-family:var(--mono);font-size:11px;color:var(--text3);}
+.r-ts{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:1px;text-align:center;}
+
+/* ═══════════════════════════════
+   GAS GAUGE PANEL
+═══════════════════════════════ */
+.gas-col{display:flex;flex-direction:column;gap:14px;}
+
+/* Vertical thermometer bar */
+.thermo-wrap{
+  display:flex;gap:16px;align-items:flex-end;padding:14px;
+  background:var(--panel);border:1px solid var(--b1);
+  position:relative;overflow:hidden;flex:1;
+  animation:fadeUp 0.5s ease backwards;
+}
+.thermo-wrap::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--fire),var(--ember),transparent);opacity:0.5;}
+.thermo-wrap::after{content:'';position:absolute;top:0;right:0;
+  width:0;height:0;border-style:solid;
+  border-width:0 14px 14px 0;border-color:transparent var(--ink) transparent transparent;}
+
+.thermo-tube{
+  width:28px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,106,0,0.2);
+  border-radius:14px;flex-shrink:0;position:relative;overflow:hidden;
+  height:180px;
+}
+.thermo-fill{
+  position:absolute;bottom:0;left:0;right:0;
+  background:linear-gradient(to top,var(--lava),var(--fire),var(--ember),var(--ember2));
+  transition:height 0.8s cubic-bezier(0.4,0,0.2,1);border-radius:14px;
+  box-shadow:0 0 12px rgba(255,106,0,0.5);
+}
+.thermo-marks{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:6px 0;}
+.thermo-mark{width:100%;height:1px;background:rgba(255,106,0,0.1);}
+.thermo-mark:nth-child(3){background:rgba(255,170,0,0.3);}/* threshold */
+.thermo-thresh{
+  position:absolute;right:-2px;
+  width:8px;height:1px;background:var(--ember);
+  box-shadow:0 0 4px var(--ember);
+}
+
+.thermo-info{flex:1;display:flex;flex-direction:column;justify-content:space-between;height:180px;}
+.thermo-big{
+  font-family:var(--stencil);font-size:38px;color:var(--status-h);
+  text-shadow:0 0 16px var(--status-h);transition:color 0.4s,text-shadow 0.4s;
+  line-height:1;letter-spacing:2px;
+}
+.thermo-label{font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:2px;text-transform:uppercase;}
+.thermo-pct{font-family:var(--stencil);font-size:24px;color:var(--text);letter-spacing:2px;}
+.thermo-markers{display:flex;flex-direction:column;gap:4px;}
+.tm-row{display:flex;align-items:center;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04);}
+.tm-label{font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:1px;}
+.tm-val{font-family:var(--mono);font-size:9px;font-weight:700;}
+.tm-safe{color:var(--safe);}
+.tm-warn{color:var(--ember);}
+.tm-crit{color:var(--lava);}
+
+/* ═══════════════════════════════
+   FLAME ORB PANEL
+═══════════════════════════════ */
+.flame-pnl{
+  background:var(--panel);border:1px solid var(--b1);
+  display:flex;flex-direction:column;align-items:center;
+  padding:16px;gap:10px;position:relative;overflow:hidden;
+  animation:fadeUp 0.6s ease backwards;
+}
+.flame-pnl::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--fire),var(--ember),transparent);opacity:0.5;}
+.flame-pnl::after{content:'';position:absolute;top:0;right:0;
+  width:0;height:0;border-style:solid;
+  border-width:0 14px 14px 0;border-color:transparent var(--ink) transparent transparent;}
+
+.flame-title{font-family:var(--mono);font-size:9px;letter-spacing:3px;color:var(--fire);text-transform:uppercase;font-weight:700;align-self:flex-start;display:flex;align-items:center;gap:7px;}
+.flame-title::before{content:'';display:block;width:2px;height:12px;background:linear-gradient(to bottom,var(--fire),var(--ember2));border-radius:1px;}
+
+/* Flame orb with animated rings */
+.orb-wrap{position:relative;width:100px;height:100px;display:flex;align-items:center;justify-content:center;}
+.orb-ring{position:absolute;border-radius:50%;border:1px solid;opacity:0;}
+.orb-ring.r1{inset:0;border-color:rgba(255,80,0,0.6);}
+.orb-ring.r2{inset:-8px;border-color:rgba(255,80,0,0.35);}
+.orb-ring.r3{inset:-18px;border-color:rgba(255,80,0,0.15);}
+.orb-core{
+  width:72px;height:72px;border-radius:50%;
+  background:rgba(20,10,5,0.8);border:2px solid rgba(255,106,0,0.2);
+  display:flex;align-items:center;justify-content:center;
+  font-size:32px;transition:all 0.4s;
+  box-shadow:0 0 0px transparent;
+}
+/* Active flame */
+.orb-wrap.flame-on .orb-core{
+  background:rgba(255,40,0,0.15);border-color:#ff5000;
+  box-shadow:0 0 24px rgba(255,80,0,0.6),0 0 50px rgba(255,40,0,0.3),inset 0 0 20px rgba(255,80,0,0.1);
+}
+.orb-wrap.flame-on .orb-ring{opacity:1;}
+.orb-wrap.flame-on .orb-ring.r1{animation:pulseRing 0.6s ease-in-out infinite;}
+.orb-wrap.flame-on .orb-ring.r2{animation:pulseRing 0.6s ease-in-out 0.1s infinite;}
+.orb-wrap.flame-on .orb-ring.r3{animation:pulseRing 0.6s ease-in-out 0.2s infinite;}
+.orb-wrap.flame-on .orb-core{animation:flameDance 0.5s infinite;}
+
+.flame-status{font-family:var(--stencil);font-size:18px;letter-spacing:4px;text-align:center;transition:color 0.4s;}
+.flame-status.off{color:var(--text3);}
+.flame-status.on{color:#ff5000;text-shadow:0 0 12px rgba(255,80,0,0.7);}
+.flame-badge{
+  font-family:var(--mono);font-size:9px;letter-spacing:2px;padding:4px 12px;border-radius:2px;
+  border:1px solid;text-transform:uppercase;transition:all 0.3s;
+}
+.flame-badge.clear{border-color:rgba(0,255,136,0.2);color:var(--safe);background:rgba(0,255,136,0.05);}
+.flame-badge.detected{border-color:rgba(255,80,0,0.4);color:#ff5000;background:rgba(255,80,0,0.08);animation:blink 0.5s step-end infinite;}
+.flame-pin{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:1px;}
+
+/* ═══════════════════════════════
+   SERVO PANEL
+═══════════════════════════════ */
+.servo-pnl{
+  background:var(--panel);border:1px solid var(--b1);
+  padding:14px;position:relative;overflow:hidden;
+  animation:fadeUp 0.7s ease backwards;
+}
+.servo-pnl::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--fire),var(--ember),transparent);opacity:0.5;}
+.servo-pnl::after{content:'';position:absolute;top:0;right:0;
+  width:0;height:0;border-style:solid;
+  border-width:0 14px 14px 0;border-color:transparent var(--ink) transparent transparent;}
+
+.servo-dial{display:flex;align-items:center;justify-content:center;margin:8px 0;}
+.servo-angle-big{font-family:var(--stencil);font-size:28px;color:var(--status-h);letter-spacing:3px;text-shadow:0 0 12px var(--status-h);transition:color 0.4s,text-shadow 0.4s;text-align:center;}
+.servo-sub{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:1px;text-align:center;margin-top:2px;}
+
+/* ═══════════════════════════════
+   CHART — OSCILLOSCOPE
+═══════════════════════════════ */
+.chart-pnl{
+  background:var(--panel);border:1px solid var(--b1);
+  margin-bottom:14px;position:relative;overflow:hidden;
+  animation:fadeUp 0.5s ease backwards;
+}
+.chart-inner{padding:14px;position:relative;}
+.chart-crt{
+  position:absolute;inset:14px;
+  background-image:
+    linear-gradient(rgba(255,106,0,0.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,106,0,0.03) 1px,transparent 1px);
+  background-size:44px 36px;pointer-events:none;
+}
+.chart-inner canvas{max-height:160px;}
+.chart-legend{display:flex;gap:16px;margin-top:6px;}
+.cl-item{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;color:var(--text3);}
+.cl-dot{width:10px;height:3px;border-radius:1px;}
+
+/* ═══════════════════════════════
+   HISTORY LOG
+═══════════════════════════════ */
+.log-pnl{
+  background:var(--panel);border:1px solid var(--b1);
+  margin-bottom:14px;overflow:hidden;
+  animation:fadeUp 0.6s ease backwards;
+}
+.log-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;border-bottom:1px solid var(--b1);
+  background:rgba(0,0,0,0.35);
+}
+.log-cols{
+  display:grid;grid-template-columns:170px 80px 70px 110px 1fr;
+  padding:7px 14px;font-family:var(--mono);font-size:8px;
+  letter-spacing:2px;color:var(--text3);text-transform:uppercase;
+  background:rgba(0,0,0,0.25);border-bottom:1px solid rgba(255,106,0,0.06);
+}
+.log-scroll{max-height:280px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,106,0,0.2) transparent;}
+.log-row{
+  display:grid;grid-template-columns:170px 80px 70px 110px 1fr;
+  padding:9px 14px;border-bottom:1px solid rgba(255,255,255,0.025);
+  font-family:var(--mono);font-size:10px;align-items:center;
+  transition:background 0.2s;animation:row-slide 0.3s ease;
+}
+.log-row:hover{background:rgba(255,106,0,0.04);}
+.log-row:last-child{border-bottom:none;}
+.log-ts{font-size:9px;color:var(--text3);}
+.log-gas{color:var(--cyan);}
+.log-flame.y{color:#ff5000;}
+.log-flame.n{color:var(--text3);}
+.log-pill{display:inline-block;padding:2px 8px;border-radius:2px;font-size:8px;font-weight:700;letter-spacing:1.5px;border:1px solid;}
+.log-pill.SAFE{background:rgba(0,255,136,0.07);color:var(--safe);border-color:rgba(0,255,136,0.2);}
+.log-pill.WARNING{background:rgba(255,170,0,0.07);color:var(--ember);border-color:rgba(255,170,0,0.2);}
+.log-pill.CRITICAL{background:rgba(255,26,26,0.1);color:var(--lava);border-color:rgba(255,26,26,0.3);animation:blink 0.5s step-end infinite;}
+.log-note{font-size:9px;color:var(--text3);}
+.log-empty{padding:40px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--text3);letter-spacing:3px;}
+
+/* ═══════════════════════════════
+   STATS ROW (bottom)
+═══════════════════════════════ */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px;}
+.stat-card{
+  background:var(--panel);border:1px solid var(--b1);
+  padding:14px;position:relative;overflow:hidden;
+  animation:fadeUp 0.5s ease backwards;transition:border-color 0.3s;
+}
+.stat-card:hover{border-color:var(--b2);}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--fire),var(--ember),transparent);opacity:0.4;}
+.stat-card::after{content:'';position:absolute;top:0;right:0;
+  width:0;height:0;border-style:solid;border-width:0 12px 12px 0;border-color:transparent var(--ink) transparent transparent;}
+.sc-label{font-family:var(--mono);font-size:8px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:8px;}
+.sc-val{font-family:var(--stencil);font-size:30px;letter-spacing:2px;color:var(--fire);line-height:1;margin-bottom:4px;}
+.sc-sub{font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:1px;}
+
+/* ═══════════════════════════════
+   FOOTER
+═══════════════════════════════ */
+footer{
+  border-top:1px solid var(--b1);padding:14px 0;
+  display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+}
+footer p{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;}
+
+@media(max-width:700px){
+  .log-cols,.log-row{grid-template-columns:1fr 70px 90px;}
+  .log-row .log-ts,.log-row .log-gas,.log-cols :nth-child(1),.log-cols :nth-child(2){display:none;}
+  .stats-row{grid-template-columns:1fr 1fr;}
+}
+</style>
+</head>
+<body>
+<!-- CANVASES -->
+<canvas id="fire-bg"></canvas>
+<canvas id="bubble-canvas"></canvas>
+<div id="danger-frame"></div>
+
+<div id="app">
+<div id="warn-stripe"></div>
+
+<!-- ── HEADER ── -->
+<div class="hdr">
+  <div class="hdr-brand">
+    <div class="pyros-sigil">
+      <svg viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="25" cy="25" r="23" stroke="rgba(255,106,0,0.3)" stroke-width="1"/>
+        <circle cx="25" cy="25" r="16" stroke="rgba(255,170,0,0.2)" stroke-width="0.5" stroke-dasharray="3 3"/>
+        <!-- Flame shape -->
+        <path d="M25 8 C25 8 32 16 32 22 C32 26 29 28 27 26 C30 20 26 15 25 8Z" fill="rgba(255,106,0,0.7)"/>
+        <path d="M25 8 C25 8 18 16 18 22 C18 26 21 28 23 26 C20 20 24 15 25 8Z" fill="rgba(255,170,0,0.5)"/>
+        <circle cx="25" cy="30" r="6" fill="rgba(255,80,0,0.6)" stroke="rgba(255,170,0,0.4)" stroke-width="1"/>
+        <circle cx="25" cy="30" r="2.5" fill="rgba(255,220,0,0.9)"/>
+        <!-- Sensor lines -->
+        <line x1="8" y1="25" x2="14" y2="25" stroke="rgba(255,106,0,0.4)" stroke-width="1"/>
+        <line x1="36" y1="25" x2="42" y2="25" stroke="rgba(255,106,0,0.4)" stroke-width="1"/>
+        <line x1="25" y1="40" x2="25" y2="46" stroke="rgba(255,106,0,0.4)" stroke-width="1"/>
+      </svg>
+    </div>
+    <div class="brand-copy">
+      <h1>PYROS</h1>
+      <p>Fire & Gas Safety Command — ESP32</p>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <div class="hdr-cell">
+      <div class="hc-label">Node</div>
+      <div class="hc-val">ESP32-01</div>
+    </div>
+    <div class="hdr-cell">
+      <div class="hc-label">Time</div>
+      <div class="hc-clock" id="hdr-clock">00:00:00</div>
+    </div>
+    <div class="hdr-cell">
+      <div class="hc-label">Uplink</div>
+      <div class="live-wrap">
+        <div class="live-dot" id="live-dot"></div>
+        <span class="live-txt" id="live-txt">INIT</span>
+      </div>
+    </div>
+    <div class="hdr-cell">
+      <div class="hc-label">Last sync</div>
+      <div class="hc-val" id="hdr-sync" style="font-size:10px;">--:--:--</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── TICKER ── -->
+<div class="ticker">
+  <div class="ticker-inner" id="ticker">
+    <span class="t-item"><span class="t-sep">▶</span> SYSTEM ARMED <span class="t-sep">◆</span></span>
+    <span class="t-item">MQ2 SENSOR ACTIVE — GPIO 34 <span class="t-sep">◆</span></span>
+    <span class="t-item">FLAME SENSOR — GPIO 27 <span class="t-sep">◆</span></span>
+    <span class="t-item">GAS THRESHOLD: 1500 ADC <span class="t-sep">◆</span></span>
+    <span class="t-item">SERVO VALVE — GPIO 18 <span class="t-sep">◆</span></span>
+    <span class="t-item">FIREBASE REALTIME DB <span class="t-sep">◆</span></span>
+    <span class="t-item">UPDATE INTERVAL: 3s <span class="t-sep">◆</span></span>
+    <span class="t-item"><span class="t-sep">▶</span> SYSTEM ARMED <span class="t-sep">◆</span></span>
+    <span class="t-item">MQ2 SENSOR ACTIVE — GPIO 34 <span class="t-sep">◆</span></span>
+    <span class="t-item">FLAME SENSOR — GPIO 27 <span class="t-sep">◆</span></span>
+    <span class="t-item">GAS THRESHOLD: 1500 ADC <span class="t-sep">◆</span></span>
+    <span class="t-item">SERVO VALVE — GPIO 18 <span class="t-sep">◆</span></span>
+    <span class="t-item">FIREBASE REALTIME DB <span class="t-sep">◆</span></span>
+    <span class="t-item">UPDATE INTERVAL: 3s <span class="t-sep">◆</span></span>
+  </div>
+</div>
+
+<!-- ── MAIN GRID ── -->
+<div class="grid">
+
+  <!-- LEFT: Gas thermometer + servo -->
+  <div class="gas-col">
+    <!-- Thermometer -->
+    <div class="thermo-wrap" style="animation-delay:0.1s">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--fire),var(--ember),transparent);opacity:0.5;"></div>
+      <div style="position:absolute;top:0;right:0;width:0;height:0;border-style:solid;border-width:0 14px 14px 0;border-color:transparent var(--ink) transparent transparent;"></div>
+      <div style="padding:10px 14px 14px;width:100%;">
+        <div class="ptitle-l" style="margin-bottom:12px;">
+          <div class="pt-bar"></div>
+          <span class="pt-text">Gas Level — MQ2</span>
+        </div>
+        <div style="display:flex;gap:14px;align-items:flex-end;">
+          <!-- Tube -->
+          <div style="position:relative;">
+            <div class="thermo-tube">
+              <div class="thermo-fill" id="thermo-fill" style="height:0%"></div>
+              <div class="thermo-marks">
+                <div class="thermo-mark"></div><div class="thermo-mark"></div>
+                <div class="thermo-mark"></div><div class="thermo-mark"></div>
+                <div class="thermo-mark"></div>
+              </div>
+            </div>
+            <!-- threshold marker at 36.6% from bottom -->
+            <div class="thermo-thresh" style="bottom:36.6%"></div>
+          </div>
+          <!-- Info -->
+          <div class="thermo-info">
+            <div>
+              <div class="thermo-label">Raw ADC</div>
+              <div class="thermo-big" id="gas-big">----</div>
+              <div class="thermo-label" style="margin-top:4px;">of 4095 max</div>
+              <div class="thermo-pct" id="gas-pct" style="margin-top:6px;">--%</div>
+            </div>
+            <div class="thermo-markers">
+              <div class="tm-row"><span class="tm-label">SAFE</span><span class="tm-val tm-safe">&lt; 1500</span></div>
+              <div class="tm-row"><span class="tm-label">WARN</span><span class="tm-val tm-warn">1500–2500</span></div>
+              <div class="tm-row"><span class="tm-label">CRIT</span><span class="tm-val tm-crit">&gt; 2500</span></div>
+              <div class="tm-row"><span class="tm-label">PEAK</span><span class="tm-val" id="peak-val" style="color:var(--ember)">----</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Servo panel -->
+    <div class="servo-pnl" style="animation-delay:0.2s">
+      <div class="ptitle">
+        <div class="ptitle-l"><div class="pt-bar"></div><span class="pt-text">Servo Valve</span></div>
+        <span class="pt-right">GPIO 18</span>
+      </div>
+      <div style="padding:12px;">
+        <div class="servo-dial">
+          <svg width="140" height="80" viewBox="0 0 140 80">
+            <!-- Arc track -->
+            <path d="M14,75 A56,56 0 0,1 126,75" stroke="rgba(255,106,0,0.1)" stroke-width="10" fill="none" stroke-linecap="round"/>
+            <!-- Arc fill -->
+            <path id="servo-arc-path" d="M14,75 A56,56 0 0,1 126,75" stroke="var(--fire)" stroke-width="10" fill="none" stroke-linecap="round"
+              stroke-dasharray="175.9" stroke-dashoffset="175.9" style="transition:stroke-dashoffset 0.9s ease,stroke 0.5s;"/>
+            <!-- Tick marks -->
+            <line x1="14" y1="75" x2="19" y2="72" stroke="rgba(255,106,0,0.3)" stroke-width="1"/>
+            <line x1="70" y1="14" x2="70" y2="20" stroke="rgba(255,106,0,0.3)" stroke-width="1"/>
+            <line x1="126" y1="75" x2="121" y2="72" stroke="rgba(255,106,0,0.3)" stroke-width="1"/>
+            <!-- Labels -->
+            <text x="10" y="72" fill="rgba(255,106,0,0.4)" font-size="8" font-family="Cousine">0°</text>
+            <text x="62" y="12" fill="rgba(255,106,0,0.4)" font-size="8" font-family="Cousine">90°</text>
+            <text x="112" y="72" fill="rgba(255,106,0,0.4)" font-size="8" font-family="Cousine">180°</text>
+            <!-- Needle -->
+            <line id="servo-needle" x1="70" y1="75" x2="70" y2="26"
+              stroke="var(--ember)" stroke-width="2" stroke-linecap="round"
+              style="transform-origin:70px 75px;transition:transform 0.9s ease;"/>
+            <circle cx="70" cy="75" r="5" fill="rgba(0,0,0,0.8)" stroke="rgba(255,106,0,0.4)" stroke-width="1.5"/>
+          </svg>
+        </div>
+        <div class="servo-angle-big" id="servo-angle">0°</div>
+        <div class="servo-sub" id="servo-label">CLOSED — SAFE</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER: Reactor core -->
+  <div class="reactor-pnl" style="animation-delay:0.05s">
+    <div style="font-family:var(--mono);font-size:9px;letter-spacing:3px;color:var(--fire);text-transform:uppercase;align-self:flex-start;font-weight:700;">⬡ STATUS CORE</div>
+
+    <div class="reactor-wrap">
+      <div class="r-ring1"></div>
+      <div class="r-ring2"></div>
+      <!-- SVG arc ring -->
+      <svg class="r-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="100" cy="100" r="88" stroke="rgba(255,106,0,0.06)" stroke-width="10" fill="none"/>
+        <circle id="reactor-arc" cx="100" cy="100" r="88" stroke="var(--safe)" stroke-width="10" fill="none"
+          stroke-linecap="round" stroke-dasharray="553" stroke-dashoffset="553"
+          transform="rotate(-90 100 100)" style="transition:stroke-dashoffset 0.9s ease,stroke 0.5s;"/>
+        <!-- Bracket decorations -->
+        <path d="M16,50 L16,20 L46,20" stroke="rgba(255,106,0,0.2)" stroke-width="1" fill="none"/>
+        <path d="M184,50 L184,20 L154,20" stroke="rgba(255,106,0,0.2)" stroke-width="1" fill="none"/>
+        <path d="M16,150 L16,180 L46,180" stroke="rgba(255,106,0,0.2)" stroke-width="1" fill="none"/>
+        <path d="M184,150 L184,180 L154,180" stroke="rgba(255,106,0,0.2)" stroke-width="1" fill="none"/>
+      </svg>
+      <div class="r-glow"></div>
+      <div class="r-center">
+        <div class="r-emoji" id="core-emoji">🛡️</div>
+        <div class="r-status" id="core-status">SAFE</div>
+        <div class="r-desc" id="core-desc">ALL CLEAR</div>
+      </div>
+    </div>
+
+    <div class="seg-box" style="width:100%">
+      <span class="seg-num" id="seg-gas">----</span>
+      <span class="seg-unit">ADC</span>
+    </div>
+
+    <!-- Inline mini status grid -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;">
+      <div style="background:rgba(0,0,0,0.4);border:1px solid var(--b1);padding:8px;text-align:center;">
+        <div style="font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:2px;margin-bottom:4px;">FLAME</div>
+        <div style="font-family:var(--stencil);font-size:16px;letter-spacing:2px;" id="mini-flame">NO</div>
+      </div>
+      <div style="background:rgba(0,0,0,0.4);border:1px solid var(--b1);padding:8px;text-align:center;">
+        <div style="font-family:var(--mono);font-size:8px;color:var(--text3);letter-spacing:2px;margin-bottom:4px;">VALVE</div>
+        <div style="font-family:var(--stencil);font-size:16px;letter-spacing:2px;" id="mini-servo">0°</div>
+      </div>
+    </div>
+
+    <div class="r-ts" id="core-ts">⏱ AWAITING DATA...</div>
+  </div>
+
+  <!-- RIGHT: Flame + health -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+
+    <!-- Flame panel -->
+    <div class="flame-pnl" style="animation-delay:0.15s">
+      <div class="flame-title">Flame Sensor</div>
+      <div class="orb-wrap" id="flame-orb">
+        <div class="orb-ring r1"></div>
+        <div class="orb-ring r2"></div>
+        <div class="orb-ring r3"></div>
+        <div class="orb-core">🔥</div>
+      </div>
+      <div class="flame-status off" id="flame-status">NO FLAME</div>
+      <div class="flame-badge clear" id="flame-badge">● SENSOR CLEAR</div>
+      <div class="flame-pin">Digital Pin GPIO 27</div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:1px;" id="flame-raw">SIGNAL: HIGH (CLEAR)</div>
+    </div>
+
+    <!-- System health -->
+    <div class="pnl" style="padding:14px;animation-delay:0.25s;flex:1;">
+      <div class="ptitle">
+        <div class="ptitle-l"><div class="pt-bar"></div><span class="pt-text">System Health</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;margin-top:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">FIREBASE</span>
+          <span style="font-family:var(--mono);font-size:9px;" id="health-fb" >● --</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">MQ2 SENSOR</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--safe);">● ACTIVE</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">FLAME SENSOR</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--safe);">● ACTIVE</span>
+        </div>
+        <div style="height:1px;background:var(--b1);margin:2px 0;"></div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">DATA POINTS</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--cyan);" id="h-datapts">0</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">ALERTS FIRED</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--ember);" id="h-alerts">0</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">PEAK GAS ADC</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--fire);" id="h-peak">----</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);">THRESHOLD</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--ember);">1500 ADC</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── CHART ── -->
+<div class="chart-pnl">
+  <div class="ptitle" style="padding:10px 14px;">
+    <div class="ptitle-l"><div class="pt-bar"></div><span class="pt-text">Gas Waveform — Real-time</span></div>
+    <div class="chart-legend">
+      <div class="cl-item"><div class="cl-dot" style="background:var(--fire)"></div>Gas ADC</div>
+      <div class="cl-item"><div class="cl-dot" style="background:var(--ember);opacity:0.6"></div>Threshold 1500</div>
+    </div>
+  </div>
+  <div class="chart-inner">
+    <div class="chart-crt"></div>
+    <canvas id="gasChart"></canvas>
+  </div>
+</div>
+
+<!-- ── STATS ROW ── -->
+<div class="stats-row">
+  <div class="stat-card" style="animation-delay:0.1s">
+    <div class="sc-label">Total Readings</div>
+    <div class="sc-val" id="sc-total">0</div>
+    <div class="sc-sub">since session start</div>
+  </div>
+  <div class="stat-card" style="animation-delay:0.15s">
+    <div class="sc-label">Peak Gas ADC</div>
+    <div class="sc-val" id="sc-peak" style="color:var(--ember)">0</div>
+    <div class="sc-sub">maximum recorded</div>
+  </div>
+  <div class="stat-card" style="animation-delay:0.20s">
+    <div class="sc-label">Alert Events</div>
+    <div class="sc-val" id="sc-alerts" style="color:var(--lava)">0</div>
+    <div class="sc-sub">warn + critical</div>
+  </div>
+  <div class="stat-card" style="animation-delay:0.25s">
+    <div class="sc-label">Uptime</div>
+    <div class="sc-val" id="sc-uptime" style="color:var(--cyan)">0s</div>
+    <div class="sc-sub">dashboard session</div>
+  </div>
+</div>
+
+<!-- ── HISTORY LOG ── -->
+<div class="log-pnl">
+  <div class="log-head">
+    <div class="ptitle-l"><div class="pt-bar"></div><span class="pt-text">Alert History Log</span></div>
+    <span style="font-family:var(--mono);font-size:9px;color:var(--status-h);transition:color 0.5s;" id="log-count">0 entries</span>
+  </div>
+  <div class="log-cols">
+    <div>Timestamp</div><div>Gas ADC</div><div>Flame</div><div>Status</div><div>Note</div>
+  </div>
+  <div class="log-scroll" id="log-scroll">
+    <div class="log-empty">⌛ &nbsp; AWAITING TRANSMISSION FROM ESP32...</div>
+  </div>
+</div>
+
+<footer>
+  <p>PYROS v2.0 · ESP32 + MQ2 + FLAME SENSOR · Local WebServer (No Firebase)</p>
+  <p>SmokeLimit:500 · FlameLimit:500 · MQ2:GPIO36/34 · FLAME:GPIO39/35 · BUZ:25 · LED:26 · SERVO:13</p>
+</footer>
+</div><!-- end #app -->
+
+<script>
+/* ══════════════════════════════════════════════════════
+   ESP32 CONFIG — SET YOUR ESP32 IP ADDRESS HERE
+   How to find IP: Open Serial Monitor after flashing,
+   look for line: "[WiFi] ESP32 IP Address: http://x.x.x.x"
+══════════════════════════════════════════════════════ */
+const ESP32_IP  = "10.165.214.194";   // ← CHANGE THIS to your ESP32's IP
+const API_URL   = `http://${ESP32_IP}/data`;
+const POLL_MS   = 2000;              // fetch every 2 seconds
+
+/* ══════════════════════════
+   CONSTANTS (matching your .ino)
+══════════════════════════ */
+const GAS_MAX    = 4095;   // MQ2 max ADC
+const GAS_THRESH = 500;    // smokeLimit from your .ino
+const CHART_MAX  = 50;
+const LOG_MAX    = 10;
+
+/* ══════════════════════════
+   FIRE BACKGROUND SIMULATION
+══════════════════════════ */
+(function(){
+  const cv = document.getElementById('fire-bg');
+  const ctx = cv.getContext('2d');
+  let W, H;
+  function resize(){ W = cv.width = window.innerWidth; H = cv.height = window.innerHeight; }
+  resize(); window.addEventListener('resize', resize);
+
+  const COLS = 80, ROWS = 50;
+  let heat = new Array(COLS * ROWS).fill(0);
+  const palette = [];
+  for(let i = 0; i < 256; i++){
+    const r = Math.min(255, i * 3);
+    const g = Math.min(255, Math.max(0, i * 2 - 128));
+    const b = 0;
+    palette.push([r, g, b]);
+  }
+
+  function update(){
+    // Source: bottom row random heat
+    for(let x = 0; x < COLS; x++){
+      heat[(ROWS-1)*COLS + x] = Math.random() > 0.4 ? 180 + Math.random()*75 : 0;
+    }
+    // Spread upward
+    for(let y = 0; y < ROWS-1; y++){
+      for(let x = 0; x < COLS; x++){
+        const below = heat[(y+1)*COLS + x];
+        const left  = x > 0 ? heat[(y+1)*COLS + x-1] : 0;
+        const right = x < COLS-1 ? heat[(y+1)*COLS + x+1] : 0;
+        const avg   = (below + left + right) / 3;
+        heat[y*COLS + x] = Math.max(0, avg - 2 - Math.random()*3);
+      }
+    }
+  }
+
+  function draw(){
+    update();
+    const cw = W/COLS, ch = H/ROWS;
+    ctx.clearRect(0, 0, W, H);
+    for(let y = 0; y < ROWS; y++){
+      for(let x = 0; x < COLS; x++){
+        const v = Math.min(255, Math.floor(heat[y*COLS + x]));
+        if(v < 5) continue;
+        const [r,g,b] = palette[v];
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(x*cw, y*ch, cw+1, ch+1);
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+/* ══════════════════════════
+   BUBBLE CANVAS (lava lamp gas bubbles)
+══════════════════════════ */
+(function(){
+  const cv = document.getElementById('bubble-canvas');
+  const ctx = cv.getContext('2d');
+  let W, H, bubbles = [];
+  let dangerLevel = 0;
+
+  function resize(){ W = cv.width = window.innerWidth; H = cv.height = window.innerHeight; }
+  resize(); window.addEventListener('resize', resize);
+
+  function spawnBubble(){
+    bubbles.push({
+      x: Math.random() * W,
+      y: H + 20,
+      r: Math.random() * 12 + 4,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: -(Math.random() * 1.5 + 0.4),
+      a: Math.random() * 0.3 + 0.05,
+      wobble: Math.random() * Math.PI * 2,
+      wobbleSpeed: Math.random() * 0.03 + 0.01,
+    });
+  }
+
+  function draw(){
+    ctx.clearRect(0, 0, W, H);
+    const maxBubbles = dangerLevel === 2 ? 60 : dangerLevel === 1 ? 30 : 12;
+    if(bubbles.length < maxBubbles && Math.random() < 0.15) spawnBubble();
+
+    const speedMult = dangerLevel === 2 ? 2.5 : dangerLevel === 1 ? 1.5 : 1;
+    bubbles = bubbles.filter(b => b.y + b.r > 0);
+
+    bubbles.forEach(b => {
+      b.wobble += b.wobbleSpeed;
+      b.x += b.vx + Math.sin(b.wobble) * 0.4;
+      b.y += b.vy * speedMult;
+
+      const alpha = Math.min(b.a, (b.y / H) * b.a * 2);
+      if(dangerLevel === 2){
+        ctx.strokeStyle = `rgba(255,26,26,${alpha * 0.8})`;
+        ctx.fillStyle   = `rgba(255,26,26,${alpha * 0.15})`;
+      } else if(dangerLevel === 1){
+        ctx.strokeStyle = `rgba(255,106,0,${alpha * 0.7})`;
+        ctx.fillStyle   = `rgba(255,106,0,${alpha * 0.1})`;
+      } else {
+        ctx.strokeStyle = `rgba(0,229,200,${alpha * 0.4})`;
+        ctx.fillStyle   = `rgba(0,229,200,${alpha * 0.05})`;
+      }
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      // Specular highlight
+      ctx.fillStyle = `rgba(255,255,255,${alpha * 0.2})`;
+      ctx.beginPath();
+      ctx.arc(b.x - b.r * 0.3, b.y - b.r * 0.3, b.r * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+  window.setDanger = l => dangerLevel = l;
+})();
+
+/* ══════════════════════════
+   CLOCK
+══════════════════════════ */
+setInterval(()=>{
+  const n = new Date();
+  document.getElementById('hdr-clock').textContent =
+    [n.getHours(),n.getMinutes(),n.getSeconds()].map(x=>String(x).padStart(2,'0')).join(':');
+}, 1000);
+
+/* ══════════════════════════
+   UPTIME COUNTER
+══════════════════════════ */
+const startTime = Date.now();
+setInterval(()=>{
+  const s = Math.floor((Date.now() - startTime) / 1000);
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
+  document.getElementById('sc-uptime').textContent =
+    h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${ss}s` : `${ss}s`;
+}, 1000);
+
+/* ══════════════════════════
+   CHART.JS — FIRE STYLED
+══════════════════════════ */
+const chartCtx = document.getElementById('gasChart').getContext('2d');
+const grad = chartCtx.createLinearGradient(0, 0, 0, 160);
+grad.addColorStop(0,   'rgba(255,106,0,0.3)');
+grad.addColorStop(0.5, 'rgba(255,60,0,0.1)');
+grad.addColorStop(1,   'rgba(255,26,26,0.0)');
+
+const chartLabels = [], chartValues = [];
+const gasChart = new Chart(chartCtx, {
+  type: 'line',
+  data: {
+    labels: chartLabels,
+    datasets: [{
+      data: chartValues,
+      borderColor: '#ff6a00',
+      backgroundColor: grad,
+      borderWidth: 1.5,
+      pointRadius: 2,
+      pointBackgroundColor: '#ff6a00',
+      pointBorderColor: 'transparent',
+      tension: 0.4,
+      fill: true,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 250 },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: 'rgba(4,8,14,0.97)',
+        borderColor: 'rgba(255,106,0,0.3)',borderWidth: 1,
+        titleColor: '#ff6a00', bodyColor: '#c8a882',
+        titleFont: { family: "'Cousine',monospace", size: 10 },
+        bodyFont:  { family: "'Cousine',monospace", size: 11 },
+      }
+    },
+    scales: {
+      x: { ticks: { color: 'rgba(200,168,130,0.3)', font:{ family:"'Cousine'",size:8 }, maxTicksLimit:8, maxRotation:0 }, grid:{ color:'rgba(255,106,0,0.04)' } },
+      y: { min:0, max:GAS_MAX, ticks:{ color:'rgba(200,168,130,0.3)', font:{ family:"'Cousine'",size:9 }, stepSize:1000 }, grid:{ color:'rgba(255,106,0,0.04)' } }
+    }
+  }
+});
+
+// Threshold line plugin
+Chart.register({
+  id:'fireThresh',
+  afterDraw(chart){
+    const {ctx, scales:{y}} = chart;
+    if(!y) return;
+    const yp = y.getPixelForValue(GAS_THRESH);
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(chart.chartArea.left, yp);
+    ctx.lineTo(chart.chartArea.right, yp);
+    ctx.strokeStyle = 'rgba(255,170,0,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5,4]);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,170,0,0.6)';
+    ctx.font = "9px 'Cousine',monospace";
+    ctx.fillText('▲ THRESHOLD 1500', chart.chartArea.left + 8, yp - 4);
+    ctx.restore();
+  }
+});
+
+/* ══════════════════════════
+   STATE
+══════════════════════════ */
+let peakGas = 0, dataCount = 0, alertCount = 0;
+let historyEntries = [];
+
+const STATUS = {
+  SAFE:     { emoji:'🛡️', desc:'ALL CLEAR', cls:'', color:'#00ff88', servo:0,   servoLabel:'CLOSED — SAFE',      servoColor:'#00ff88' },
+  WARNING:  { emoji:'⚠️',  desc:'GAS HIGH',  cls:'s-warn', color:'#ffaa00', servo:90,  servoLabel:'PARTIAL — ALERT',   servoColor:'#ffaa00' },
+  CRITICAL: { emoji:'🚨', desc:'FIRE + GAS', cls:'s-crit', color:'#ff1a1a', servo:180, servoLabel:'OPEN — EMERGENCY', servoColor:'#ff2d00' }
+};
+
+/* ══════════════════════════
+   UPDATE UI
+══════════════════════════ */
+function updateUI(data){
+  // Map ESP32 JSON fields to dashboard variables
+  // ESP32 sends: smokeAnalog, flameAnalog, flameDigital, status, uptime, warmingUp
+  const gas    = typeof data.smokeAnalog === 'number' ? data.smokeAnalog : 0;
+  const flame  = data.flameDigital === 0 || (typeof data.flameAnalog === 'number' && data.flameAnalog < 500);
+  const status = typeof data.status === 'string' ? data.status.toUpperCase() : 'SAFE';
+  const ts     = new Date().toISOString(); // use current time since ESP32 has no RTC
+  const meta   = STATUS[status] || STATUS.SAFE;
+
+  // Show warming up message if sensor still warming up
+  if(data.warmingUp){
+    document.getElementById('core-desc').textContent = 'MQ2 WARMING UP...';
+  }
+
+  dataCount++;
+  if(gas > peakGas) peakGas = gas;
+  if(status !== 'SAFE') alertCount++;
+
+  // Body class
+  document.body.className = meta.cls;
+  window.setDanger(status === 'CRITICAL' ? 2 : status === 'WARNING' ? 1 : 0);
+
+  // Reactor core
+  document.getElementById('core-emoji').textContent  = meta.emoji;
+  document.getElementById('core-status').textContent = status;
+  document.getElementById('core-desc').textContent   = meta.desc;
+
+  // Reactor arc
+  const arc = document.getElementById('reactor-arc');
+  const pct = Math.min(gas / GAS_MAX, 1);
+  arc.setAttribute('stroke-dashoffset', 553 * (1 - pct));
+  arc.setAttribute('stroke', meta.color);
+
+  // Seg display
+  const seg = document.getElementById('seg-gas');
+  seg.textContent = gas;
+  seg.style.color = meta.color;
+  seg.style.textShadow = `0 0 30px ${meta.color}, 0 0 60px ${meta.color}40`;
+
+  // Thermometer
+  const fillPct = Math.min((gas / GAS_MAX) * 100, 100);
+  document.getElementById('thermo-fill').style.height   = fillPct + '%';
+  document.getElementById('gas-big').textContent        = gas;
+  document.getElementById('gas-big').style.color        = meta.color;
+  document.getElementById('gas-pct').textContent        = fillPct.toFixed(1) + '%';
+  document.getElementById('peak-val').textContent       = peakGas;
+
+  // Flame
+  const orb = document.getElementById('flame-orb');
+  orb.className = 'orb-wrap' + (flame ? ' flame-on' : '');
+  document.getElementById('flame-status').textContent = flame ? 'FLAME DETECTED' : 'NO FLAME';
+  document.getElementById('flame-status').className   = 'flame-status ' + (flame ? 'on' : 'off');
+  document.getElementById('flame-badge').textContent  = flame ? '🔥 FLAME ACTIVE' : '● SENSOR CLEAR';
+  document.getElementById('flame-badge').className    = 'flame-badge ' + (flame ? 'detected' : 'clear');
+  document.getElementById('flame-raw').textContent    = 'SIGNAL: ' + (flame ? 'LOW (ACTIVE)' : 'HIGH (CLEAR)');
+
+  // Mini labels
+  document.getElementById('mini-flame').textContent = flame ? 'YES' : 'NO';
+  document.getElementById('mini-flame').style.color  = flame ? '#ff5000' : 'var(--safe)';
+
+  // Servo
+  const angle = meta.servo;
+  const needle = document.getElementById('servo-needle');
+  needle.style.transform = `rotate(${angle - 90}deg)`;
+  const servoArc = document.getElementById('servo-arc-path');
+  servoArc.setAttribute('stroke-dashoffset', 175.9 * (1 - angle / 180));
+  servoArc.setAttribute('stroke', meta.servoColor);
+  document.getElementById('servo-angle').textContent = angle + '°';
+  document.getElementById('servo-angle').style.color  = meta.servoColor;
+  document.getElementById('servo-label').textContent  = meta.servoLabel;
+  document.getElementById('mini-servo').textContent   = angle + '°';
+  document.getElementById('mini-servo').style.color   = meta.servoColor;
+
+  // Timestamp
+  const fts = formatTs(ts);
+  document.getElementById('core-ts').textContent   = '⏱ ' + fts;
+  document.getElementById('hdr-sync').textContent  = formatTsShort(ts);
+
+  // Chart
+  chartLabels.push(formatTsShort(ts));
+  chartValues.push(gas);
+  if(chartLabels.length > CHART_MAX){ chartLabels.shift(); chartValues.shift(); }
+  gasChart.data.datasets[0].borderColor = meta.color;
+  gasChart.data.datasets[0].pointBackgroundColor = meta.color;
+  gasChart.update('none');
+
+  // Stats
+  document.getElementById('sc-total').textContent  = dataCount;
+  document.getElementById('sc-peak').textContent   = peakGas;
+  document.getElementById('sc-alerts').textContent = alertCount;
+  document.getElementById('h-datapts').textContent = dataCount;
+  document.getElementById('h-alerts').textContent  = alertCount;
+  document.getElementById('h-peak').textContent    = peakGas;
+
+  // Conn
+  document.getElementById('live-dot').style.background    = 'var(--safe)';
+  document.getElementById('live-dot').style.boxShadow     = '0 0 8px var(--safe)';
+  document.getElementById('live-txt').textContent          = 'LIVE';
+  document.getElementById('health-fb').textContent         = '● ONLINE';
+  document.getElementById('health-fb').style.color         = 'var(--safe)';
+}
+
+/* ══════════════════════════
+   HISTORY
+══════════════════════════ */
+function renderLog(){
+  const el = document.getElementById('log-scroll');
+  document.getElementById('log-count').textContent = historyEntries.length + ' entries';
+  if(!historyEntries.length){
+    el.innerHTML = '<div class="log-empty">⌛ &nbsp; AWAITING DATA FROM ESP32...</div>';
+    return;
+  }
+  const notes = { SAFE:'Normal operation', WARNING:'Smoke above threshold', CRITICAL:'FIRE + SMOKE DETECTED' };
+  el.innerHTML = historyEntries.map(e => {
+    const gas   = typeof e.smokeAnalog  === 'number' ? e.smokeAnalog : '--';
+    const flame = e.flameDigital === 0 || (typeof e.flameAnalog === 'number' && e.flameAnalog < 500);
+    const st    = typeof e.status === 'string' ? e.status.toUpperCase() : '--';
+    const ts    = typeof e.timestamp === 'string' ? e.timestamp : '--';
+    return `<div class="log-row">
+      <div class="log-ts">${esc(formatTs(ts))}</div>
+      <div class="log-gas">${gas}</div>
+      <div class="log-flame ${flame?'y':'n'}">${flame?'🔥 YES':'– NO'}</div>
+      <div><span class="log-pill ${esc(st)}">${esc(st)}</span></div>
+      <div class="log-note">${notes[st]||''}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ══════════════════════════
+   ESP32 POLLING — fetch /data every 2 seconds
+══════════════════════════ */
+async function fetchESP32(){
+  try {
+    const res  = await fetch(API_URL, { cache: 'no-store' });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    updateUI(data);
+
+    // Add to local history log
+    const entry = {
+      smokeAnalog:  data.smokeAnalog,
+      flameDigital: data.flameDigital,
+      flameAnalog:  data.flameAnalog,
+      status:       data.status,
+      timestamp:    new Date().toISOString(),
+      uptime:       data.uptime
+    };
+    historyEntries.unshift(entry);
+    if(historyEntries.length > LOG_MAX) historyEntries.pop();
+    renderLog();
+
+  } catch(e) {
+    // Show offline state
+    document.getElementById('live-dot').style.background = 'var(--lava)';
+    document.getElementById('live-dot').style.boxShadow  = '0 0 8px var(--lava)';
+    document.getElementById('live-txt').textContent       = 'OFFLINE';
+    document.getElementById('health-fb').textContent      = '● OFFLINE';
+    document.getElementById('health-fb').style.color      = 'var(--lava)';
+    console.warn('ESP32 fetch failed:', e.message,
+      '— Check ESP32_IP is set correctly. Current:', ESP32_IP);
+  }
+}
+
+function start(){
+  fetchESP32();                        // immediate first fetch
+  setInterval(fetchESP32, POLL_MS);    // then every 2 seconds
+}
+
+/* ══════════════════════════
+   UTILS
+══════════════════════════ */
+function formatTs(ts){
+  if(!ts||ts==='--') return '--';
+  const d = new Date(ts);
+  if(isNaN(d.getTime())) return ts;
+  return d.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+function formatTsShort(ts){
+  if(!ts||ts==='--') return '--';
+  const d = new Date(ts);
+  if(isNaN(d.getTime())) return ts;
+  return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+start();
+</script>
+</body>
+</html>
